@@ -181,6 +181,30 @@ class KnowledgeBaseWorkflowTests(unittest.TestCase):
         remaining = self.service.list_knowledge_units(review_status="pending")
         self.assertFalse(any(item["id"] == target_id for item in remaining))
 
+    def test_recapturing_reviewed_conversation_creates_new_pending_version(self) -> None:
+        self.service.ingest_page_session(self._sample_page_payload())
+        first_pending = self.service.list_knowledge_units(review_status="pending")
+        self.assertGreaterEqual(len(first_pending), 2)
+
+        for unit in first_pending:
+            self.service.review({"target_type": "knowledge_unit", "target_id": unit["id"], "action": "approve"})
+
+        second_result = self.service.ingest_page_session(self._sample_page_payload())
+        second_pending = self.service.list_knowledge_units(review_status="pending")
+
+        self.assertGreaterEqual(len(second_pending), 2)
+        self.assertTrue(all(unit["source_import_batch_id"] == second_result["import_batch_id"] for unit in second_pending))
+
+        canonical_versions = self.service.database.fetch_all(
+            """
+            SELECT canonical_id, COUNT(*) AS version_count
+            FROM knowledge_unit
+            GROUP BY canonical_id
+            HAVING COUNT(*) > 1
+            """
+        )
+        self.assertGreaterEqual(len(canonical_versions), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

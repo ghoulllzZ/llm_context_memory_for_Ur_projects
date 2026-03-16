@@ -690,7 +690,10 @@ class KnowledgeBaseService:
             (canonical_id,),
         ).fetchone()
         if existing and existing["body"] == unit["body"] and existing["type"] == unit["type"]:
-            return str(existing["id"])
+            existing_batch_id = existing["source_import_batch_id"] or ""
+            incoming_batch_id = import_batch_id or ""
+            if existing["review_status"] == "pending" or existing_batch_id == incoming_batch_id:
+                return str(existing["id"])
         version_no = (int(existing["version_no"]) + 1) if existing else 1
         knowledge_id = new_id()
         timestamp = now_iso()
