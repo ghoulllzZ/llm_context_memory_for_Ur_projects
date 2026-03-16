@@ -1,13 +1,37 @@
-#!/bin/sh
+#!python
+from __future__ import annotations
 
-if ! git remote get-url origin >/dev/null 2>&1; then
-  exit 0
-fi
+import subprocess
+import sys
 
-branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null)
-if [ -z "$branch" ]; then
-  exit 0
-fi
 
-echo "[auto-push] pushing $branch to origin"
-git push origin "$branch"
+def run(command: list[str], quiet: bool = False) -> int:
+    kwargs = {"check": False}
+    if quiet:
+        kwargs["stdout"] = subprocess.DEVNULL
+        kwargs["stderr"] = subprocess.DEVNULL
+    result = subprocess.run(command, **kwargs)
+    return result.returncode
+
+
+def main() -> int:
+    has_origin = run(["git", "remote", "get-url", "origin"], quiet=True) == 0
+    if not has_origin:
+        return 0
+
+    branch_result = subprocess.run(
+        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    branch = branch_result.stdout.strip()
+    if branch_result.returncode != 0 or not branch:
+        return 0
+
+    print(f"[auto-push] pushing {branch} to origin")
+    return run(["git", "push", "origin", branch])
+
+
+if __name__ == "__main__":
+    sys.exit(main())
