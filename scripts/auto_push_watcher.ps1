@@ -35,8 +35,14 @@ function Write-Log([string]$Message) {
 }
 
 function Run-Git([string[]]$GitArgs) {
-    $output = & $gitExe -C $repo $GitArgs 2>&1
-    $exitCode = $LASTEXITCODE
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & $gitExe -C $repo $GitArgs 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
     return [pscustomobject]@{
         ExitCode = $exitCode
         Output = (($output | ForEach-Object { $_.ToString() }) -join "`n").Trim()
