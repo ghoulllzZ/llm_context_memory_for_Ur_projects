@@ -68,7 +68,19 @@ $env:LLM_VISION_MODEL="gpt-4.1-mini"
 
 ## Git auto-push
 
-This repository is configured to auto-push after each successful `git commit` once an `origin` remote is set. The tracked hook lives in `.githooks/post-commit`, and local git should point `core.hooksPath` to `.githooks`.
+This repository includes a Windows-native auto-push watcher in `scripts/auto_push_watcher.ps1`. Once an `origin` remote is configured, it polls the local branch and pushes committed changes automatically when the branch is ahead of origin.
+
+To register it as a scheduled task at logon, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\register_auto_push_task.ps1
+```
+
+To remove the scheduled task later:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\unregister_auto_push_task.ps1
+```
 
 ## Run tests
 
