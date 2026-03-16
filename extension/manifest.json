@@ -1,0 +1,29 @@
+﻿{
+  "manifest_version": 3,
+  "name": "Conversation Knowledge Capture",
+  "version": "0.1.1",
+  "description": "Capture ChatGPT and Doubao conversations into the local knowledge base.",
+  "permissions": ["activeTab", "storage", "tabs", "scripting"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://www.doubao.com/*",
+    "http://127.0.0.1:8765/*",
+    "http://localhost:8765/*"
+  ],
+  "action": {
+    "default_title": "Capture conversation",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://www.doubao.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

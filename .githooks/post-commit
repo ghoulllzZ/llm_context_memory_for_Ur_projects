@@ -1,0 +1,13 @@
+#!/bin/sh
+
+if ! git remote get-url origin >/dev/null 2>&1; then
+  exit 0
+fi
+
+branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null)
+if [ -z "$branch" ]; then
+  exit 0
+fi
+
+echo "[auto-push] pushing $branch to origin"
+git push origin "$branch"

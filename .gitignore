@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.sqlite3
+*.db
+.DS_Store
+Thumbs.db
+data/
+dist/
+node_modules/
+

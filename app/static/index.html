@@ -1,0 +1,129 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Conversation Knowledge Base</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <div class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Local-first LLM Research Memory</p>
+        <h1>Conversation Knowledge Base</h1>
+        <p class="lede">Import ChatGPT and Doubao conversations, review extracted knowledge, and generate reusable context packs.</p>
+      </div>
+      <div class="hero-actions">
+        <button id="refreshButton" class="secondary">Refresh</button>
+        <span id="serverStatus" class="status-pill">Connected</span>
+      </div>
+    </header>
+
+    <main class="grid">
+      <section class="panel panel-accent">
+        <h2>Import</h2>
+        <div class="stack">
+          <label class="field">
+            <span>Create Project</span>
+            <input id="projectName" type="text" placeholder="Project name" />
+          </label>
+          <label class="field">
+            <span>Description</span>
+            <textarea id="projectDescription" rows="3" placeholder="Optional project description"></textarea>
+          </label>
+          <button id="createProjectButton">Create Project</button>
+        </div>
+        <div class="divider"></div>
+        <div class="stack">
+          <label class="field">
+            <span>Import ChatGPT Official Export</span>
+            <input id="chatgptExportInput" type="file" accept=".zip,.json" />
+          </label>
+          <button id="importExportButton">Import Export File</button>
+          <p class="hint">Use the browser extension for ChatGPT current page and Doubao current page capture.</p>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Projects</h2>
+          <span id="projectCount" class="meta"></span>
+        </div>
+        <div id="projectList" class="list"></div>
+      </section>
+
+      <section class="panel panel-wide">
+        <div class="panel-header">
+          <h2>Project Timeline</h2>
+          <span id="timelineTitle" class="meta">Select a project</span>
+        </div>
+        <div id="timeline" class="timeline empty-state">No project selected.</div>
+      </section>
+
+      <section class="panel panel-wide">
+        <div class="panel-header">
+          <h2>Review Queue</h2>
+          <span id="reviewCount" class="meta"></span>
+        </div>
+        <div id="reviewQueue" class="review-grid"></div>
+      </section>
+
+      <section class="panel panel-wide">
+        <div class="panel-header">
+          <h2>Context Pack</h2>
+          <span class="meta">Reviewed knowledge only by default</span>
+        </div>
+        <div class="context-grid">
+          <div class="stack">
+            <label class="field">
+              <span>Project</span>
+              <select id="contextProjectSelect"></select>
+            </label>
+            <label class="field">
+              <span>Template</span>
+              <select id="contextTemplateSelect">
+                <option value="continue-paper-writing">Continue Paper Writing</option>
+                <option value="continue-experiment-design">Continue Experiment Design</option>
+                <option value="merge-conclusions">Merge Conclusions</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Task Goal</span>
+              <textarea id="contextTaskGoal" rows="4" placeholder="Describe the next task"></textarea>
+            </label>
+            <label class="field">
+              <span>Budget (chars)</span>
+              <input id="contextBudget" type="number" min="500" value="2400" />
+            </label>
+            <label class="checkbox-row">
+              <input id="reviewedOnlyCheckbox" type="checkbox" checked />
+              <span>Reviewed knowledge only</span>
+            </label>
+            <button id="generateContextButton">Generate Context Pack</button>
+          </div>
+          <div class="stack">
+            <label class="field">
+              <span>Generated Output</span>
+              <textarea id="contextOutput" rows="18" readonly placeholder="Generated context pack will appear here"></textarea>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel panel-wide">
+        <div class="panel-header">
+          <h2>Search</h2>
+          <span class="meta">Keyword retrieval across messages and knowledge</span>
+        </div>
+        <div class="search-bar">
+          <input id="searchInput" type="text" placeholder="Search conversations and knowledge" />
+          <button id="searchButton" class="secondary">Search</button>
+        </div>
+        <div id="searchResults" class="list compact"></div>
+      </section>
+    </main>
+  </div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
