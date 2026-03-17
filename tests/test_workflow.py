@@ -132,8 +132,11 @@ class KnowledgeBaseWorkflowTests(unittest.TestCase):
                 "reviewed_only": True,
             }
         )
-        self.assertIn("Project:", generated["output_text"])
+        self.assertIn("# Context Pack (Editable Working Draft for LLM Handoff)", generated["output_text"])
+        self.assertIn("## 1) Research Goals and Problem", generated["output_text"])
+        self.assertIn("## 2) Core Method and Technical Route", generated["output_text"])
         self.assertIn("RAG", generated["output_text"])
+        self.assertNotIn("Relevant Approved Knowledge:", generated["output_text"])
 
         analyses = self.service.database.fetch_all("SELECT * FROM asset_analysis")
         self.assertEqual(len(analyses), 1)
@@ -153,6 +156,15 @@ class KnowledgeBaseWorkflowTests(unittest.TestCase):
             }
         )
         self.assertIn("No approved knowledge units matched", generated["output_text"])
+
+    def test_compound_message_extracts_decision_and_todo_separately(self) -> None:
+        self.service.ingest_page_session(self._sample_page_payload())
+        pending = self.service.list_knowledge_units(review_status="pending")
+        types = {item["type"] for item in pending}
+        self.assertIn("Decision", types)
+        self.assertIn("TODO", types)
+        self.assertIn("Metric", types)
+        self.assertTrue(any("0.82" in item["body"] for item in pending))
 
     def test_chatgpt_export_merges_into_existing_conversation(self) -> None:
         self.service.ingest_page_session(self._sample_page_payload())

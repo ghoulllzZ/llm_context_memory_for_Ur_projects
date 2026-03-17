@@ -114,13 +114,15 @@ def sentence_candidates(text: str) -> list[str]:
     working = text.replace("\r", "\n")
     chunks = re.split(r"[\n]+", working)
     candidates: list[str] = []
+    sentence_pattern = re.compile(r".+?(?:[\u3002\uff01\uff1f!?;\uff1b]|\.(?=\s|$)|$)")
     for chunk in chunks:
         chunk = chunk.strip(" -*\t")
         if not chunk:
             continue
-        if len(chunk) > 240:
-            parts = re.split(r"(?<=[。！？.!?;；])\s+", chunk)
-            candidates.extend(part.strip() for part in parts if 20 <= len(part.strip()) <= 240)
+        parts = [match.group(0).strip() for match in sentence_pattern.finditer(chunk)]
+        filtered_parts = [part for part in parts if 8 <= len(part) <= 240]
+        if filtered_parts:
+            candidates.extend(filtered_parts)
         elif 12 <= len(chunk) <= 240:
             candidates.append(chunk)
     seen: set[str] = set()
@@ -132,7 +134,6 @@ def sentence_candidates(text: str) -> list[str]:
             result.append(normalized)
     return result
 
-
 def classify_text(text: str) -> str | None:
     lower = text.lower()
     scores: dict[str, int] = {}
@@ -143,9 +144,14 @@ def classify_text(text: str) -> str | None:
                 score += 1
         if score:
             scores[knowledge_type] = score
+    if re.search(r"\b(f1|accuracy|precision|recall|auc|bleu|rouge|loss|metric|score)\b", lower):
+        scores["Metric"] = scores.get("Metric", 0) + 2
+    if lower.startswith("todo") or "todo:" in lower:
+        scores["TODO"] = scores.get("TODO", 0) + 2
     if not scores:
         return None
-    return max(scores.items(), key=lambda item: item[1])[0]
+    priority = {"Decision": 4, "Method": 3, "Metric": 2, "TODO": 1}
+    return max(scores.items(), key=lambda item: (item[1], priority.get(item[0], 0)))[0]
 
 
 def infer_stability(knowledge_type: str, text: str) -> str:
@@ -354,6 +360,13 @@ def build_retrieval_chunks(conversation: dict[str, Any], messages: list[dict[str
     return chunks
 
 
+TEMPLATE_FOCUS_NOTES = {
+    "continue-paper-writing": "Prioritize research goals, method details, experiment setup, metric interpretation, and writing-ready conclusions.",
+    "continue-experiment-design": "Prioritize variables, evaluation criteria, experimental steps, parameter settings, and reproducibility requirements.",
+    "merge-conclusions": "Prioritize validated conclusions, conflicts, consensus boundaries, and concrete next actions across conversations.",
+}
+
+
 def rank_knowledge_units(template_type: str, knowledge_units: list[dict[str, Any]]) -> list[dict[str, Any]]:
     weights = TEMPLATE_WEIGHTS.get(template_type, TEMPLATE_WEIGHTS["merge-conclusions"])
     ranked = []
@@ -365,6 +378,118 @@ def rank_knowledge_units(template_type: str, knowledge_units: list[dict[str, Any
     return [item[1] for item in ranked]
 
 
+def _unit_key(unit: dict[str, Any]) -> str:
+    return str(unit.get("id") or sha256_text(f"{unit.get('type', '')}|{unit.get('body', '')}"))
+
+
+def _unit_cost(unit: dict[str, Any]) -> int:
+    title = normalize_space(str(unit.get("title") or ""))
+    body = normalize_space(str(unit.get("body") or ""))
+    return max(40, len(title) + len(body) + 24)
+
+
+def select_context_pack_units(
+    template_type: str,
+    budget_mode: str,
+    budget_value: int,
+    knowledge_units: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    ranked = rank_knowledge_units(template_type, knowledge_units)
+    if not ranked:
+        return []
+    if budget_mode != "chars":
+        return ranked[: max(6, min(len(ranked), int(budget_value or 10), 14))]
+
+    soft_budget = max(1200, int(budget_value or 3600))
+    selected: list[dict[str, Any]] = []
+    selected_keys: set[str] = set()
+    consumed = 0
+    weights = TEMPLATE_WEIGHTS.get(template_type, TEMPLATE_WEIGHTS["merge-conclusions"])
+    type_order = list(weights) + [unit["type"] for unit in ranked if unit["type"] not in weights]
+
+    for knowledge_type in type_order:
+        candidate = next((unit for unit in ranked if unit.get("type") == knowledge_type and _unit_key(unit) not in selected_keys), None)
+        if not candidate:
+            continue
+        candidate_cost = _unit_cost(candidate)
+        if selected and consumed + candidate_cost > int(soft_budget * 0.72):
+            continue
+        selected.append(candidate)
+        selected_keys.add(_unit_key(candidate))
+        consumed += candidate_cost
+
+    for unit in ranked:
+        unit_key = _unit_key(unit)
+        if unit_key in selected_keys:
+            continue
+        unit_cost = _unit_cost(unit)
+        if selected and consumed + unit_cost > soft_budget:
+            continue
+        selected.append(unit)
+        selected_keys.add(unit_key)
+        consumed += unit_cost
+        if len(selected) >= 14 or consumed >= soft_budget:
+            break
+
+    return selected[:14]
+
+
+def _group_knowledge_units(knowledge_units: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for unit in knowledge_units:
+        grouped.setdefault(str(unit.get("type") or "Unknown"), []).append(unit)
+    return grouped
+
+
+def _compact_unit_text(unit: dict[str, Any], max_chars: int = 120) -> str:
+    text = normalize_space(str(unit.get("body") or unit.get("title") or ""))
+    text = text.rstrip(" .;,")
+    if len(text) > max_chars:
+        text = text[: max_chars - 3].rstrip() + "..."
+    return text
+
+
+def _summarize_units(units: list[dict[str, Any]], max_items: int = 3, max_chars: int = 280) -> str:
+    snippets: list[str] = []
+    seen: set[str] = set()
+    for unit in units:
+        snippet = _compact_unit_text(unit)
+        if not snippet:
+            continue
+        identity = snippet.lower()
+        if identity in seen:
+            continue
+        seen.add(identity)
+        snippets.append(snippet)
+        if len(snippets) >= max_items:
+            break
+    if not snippets:
+        return "Not explicitly established in the current material."
+    summary = "; ".join(snippets)
+    if len(summary) > max_chars:
+        summary = summary[: max_chars - 3].rstrip("; ") + "..."
+    return summary
+
+
+def _keyword_summary(project_name: str, task_goal: str, knowledge_units: list[dict[str, Any]]) -> str:
+    keywords = extract_keywords(" ".join([project_name, task_goal] + [str(unit.get("body") or "") for unit in knowledge_units]))
+    if not keywords:
+        return "Not explicitly established in the current material."
+    return " / ".join(keywords[:8])
+
+
+def limit_context_pack_text(text: str, budget_mode: str, budget_value: int) -> str:
+    if budget_mode != "chars" or len(text) <= budget_value:
+        return text
+    suffix = "\n\n[Context pack truncated to fit the current budget.]"
+    head_budget = max(160, budget_value - len(suffix))
+    clipped = text[:head_budget].rstrip()
+    cut = clipped.rfind("\n")
+    if cut >= int(head_budget * 0.7):
+        clipped = clipped[:cut].rstrip()
+    return clipped + suffix
+
+
 def render_context_pack(
     project: dict[str, Any],
     template_type: str,
@@ -373,40 +498,115 @@ def render_context_pack(
     budget_value: int,
     knowledge_units: list[dict[str, Any]],
 ) -> tuple[str, list[dict[str, Any]]]:
-    selected: list[dict[str, Any]] = []
-    consumed = 0
-    for unit in rank_knowledge_units(template_type, knowledge_units):
-        block = f"- [{unit['type']}] {unit['body']}"
-        block_cost = len(block) if budget_mode == "chars" else 1
-        if selected and consumed + block_cost > budget_value:
-            continue
-        selected.append(unit)
-        consumed += block_cost
-        if consumed >= budget_value:
-            break
+    selected = select_context_pack_units(template_type, budget_mode, budget_value, knowledge_units)
+    if not selected:
+        sections = [
+            "# Context Pack (Editable Working Draft for LLM Handoff)",
+            "",
+            "> No approved knowledge units matched this request yet, so the system cannot build a reliable research context pack.",
+            "> Approve the extracted knowledge first, or uncheck reviewed_only to generate a draft pack.",
+            "",
+            "- No approved knowledge units matched this request yet.",
+        ]
+        return "\n".join(sections), selected
+
+    grouped = _group_knowledge_units(selected)
+    decisions = grouped.get("Decision", [])
+    constraints = grouped.get("Constraint", [])
+    metrics = grouped.get("Metric", [])
+    methods = grouped.get("Method", [])
+    experiment = grouped.get("ExperimentSetup", [])
+    code_design = grouped.get("CodeDesign", [])
+    prompt_templates = grouped.get("PromptTemplate", [])
+    rejected = grouped.get("RejectedOption", [])
+    todos = grouped.get("TODO", [])
+    references = grouped.get("ReferenceLead", [])
+    project_name = normalize_space(str(project.get("name") or "Untitled Project"))
+    normalized_goal = normalize_space(task_goal or "Continue the project") or "Continue the project"
 
     sections = [
-        f"Project: {project['name']}",
-        f"Template: {template_type}",
-        f"Task Goal: {task_goal}",
+        "# Context Pack (Editable Working Draft for LLM Handoff)",
         "",
-        "Relevant Approved Knowledge:",
+        "> Purpose: preserve the project's current research goals, methods, evaluation criteria, constraints, conclusions, and next steps as reusable context for the next LLM session.",
+        "> Note: this is not a chat log. It is a synthesized research handoff reconstructed from reviewed project knowledge.",
+        "",
+        "---",
+        "",
+        "## 0) Project Name",
+        "",
+        f"* Project: {project_name}",
+        "",
+        "## 1) Research Goals and Problem",
+        "",
+        "### 1.1 Current Task",
+        f"* Current task: {normalized_goal}",
+        f"* Research keywords: {_keyword_summary(project_name, normalized_goal, selected)}",
+        "",
+        "### 1.2 Confirmed Goals",
+        f"* The project is currently focused on: {_summarize_units(decisions + methods + metrics, max_items=4, max_chars=320)}",
+        "",
+        "### 1.3 Core Difficulties and Constraints",
+        f"* Current constraints, risks, or boundaries: {_summarize_units(constraints + rejected + todos, max_items=4, max_chars=320)}",
+        "",
+        "## 2) Core Method and Technical Route",
+        "",
+        "### 2.1 Main Method",
+        f"* Main working route: {_summarize_units(methods + experiment + decisions, max_items=4, max_chars=320)}",
+        "",
+        "### 2.2 Confirmed Decisions",
+        f"* Confirmed decisions: {_summarize_units(decisions, max_items=4, max_chars=320)}",
+        "",
+        "### 2.3 Rejected Options or Guardrails",
+        f"* Things not to do or boundaries to respect: {_summarize_units(rejected + constraints, max_items=4, max_chars=300)}",
+        "",
+        "## 3) Key Objects, Structured Elements, and Inputs/Outputs",
+        "",
+        "### 3.1 Research Objects / Inputs",
+        f"* Main inputs or study objects: {_summarize_units(experiment + references + methods, max_items=4, max_chars=320)}",
+        "",
+        "### 3.2 Structured Elements",
+        f"* Data structures, modules, interfaces, or prompt assets: {_summarize_units(code_design + prompt_templates + experiment, max_items=4, max_chars=320)}",
+        "",
+        "### 3.3 Expected Outputs",
+        f"* Expected outputs or deliverables: {_summarize_units(metrics + todos + decisions, max_items=4, max_chars=320)}",
+        "",
+        "## 4) Metrics, Experiments, and Validation",
+        "",
+        "### 4.1 Metrics / Success Criteria",
+        f"* Metrics or acceptance criteria currently in scope: {_summarize_units(metrics + constraints, max_items=4, max_chars=320)}",
+        "",
+        "### 4.2 Experimental Setup / Parameters",
+        f"* Experimental setup, parameters, or process requirements: {_summarize_units(experiment + methods + constraints, max_items=4, max_chars=320)}",
+        "",
+        "### 4.3 Evidence and Reference Leads",
+        f"* Reusable references or evidence leads: {_summarize_units(references, max_items=3, max_chars=260)}",
+        "",
+        "## 5) Current Conclusions, Open Questions, and Next Steps",
+        "",
+        "### 5.1 Confirmed Conclusions",
+        f"* Current validated conclusions: {_summarize_units(decisions + methods + metrics, max_items=4, max_chars=320)}",
+        "",
+        "### 5.2 Open Questions / TODO",
+        f"* Issues that still need work: {_summarize_units(todos + constraints + rejected, max_items=4, max_chars=320)}",
+        "",
+        "### 5.3 Recommended Next Step",
+        f"* Continue around '{normalized_goal}', while keeping the confirmed decisions, constraints, and metrics stable unless new evidence appears.",
+        "",
+        "## 6) Implementation and Reproduction Notes",
+        "",
+        f"* Implementation focus: {_summarize_units(code_design + methods + experiment, max_items=4, max_chars=320)}",
+        f"* Reproduction notes: {_summarize_units(constraints + references + todos, max_items=4, max_chars=320)}",
+        "",
+        "## 7) Instructions for the Next LLM",
+        "",
+        "* Do not treat this file as a chat transcript. Treat it as the project's current research state.",
+        "* If a new suggestion conflicts with a confirmed decision, metric, or constraint, explain the conflict before proposing a revision.",
+        f"* Template focus: {TEMPLATE_FOCUS_NOTES.get(template_type, TEMPLATE_FOCUS_NOTES['merge-conclusions'])}",
+        f"* Current goal for the next turn: {normalized_goal}",
+        "",
+        "# End of Context Pack",
     ]
-    if selected:
-        sections.extend(f"- [{unit['type']}] {unit['body']}" for unit in selected)
-    else:
-        sections.append("- No approved knowledge units matched this request yet.")
-    sections.extend(
-        [
-            "",
-            "Instructions for the next LLM:",
-            "- Continue from the validated context above.",
-            "- Do not overwrite confirmed decisions unless new evidence is provided.",
-            "- Call out open questions explicitly before proposing new work.",
-        ]
-    )
-    return "\n".join(sections), selected
-
+    return limit_context_pack_text("\n".join(sections), budget_mode, budget_value), selected
 
 def canonical_context_pack_id(project_id: str, template_type: str, task_goal: str) -> str:
     return sha256_text(f"{project_id}|{template_type}|{normalize_space(task_goal.lower())}")

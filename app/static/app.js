@@ -244,7 +244,7 @@ async function generateContextPack() {
       template_type: document.getElementById("contextTemplateSelect").value,
       task_goal: document.getElementById("contextTaskGoal").value,
       budget_mode: "chars",
-      budget_value: Number(document.getElementById("contextBudget").value || 2400),
+      budget_value: Number(document.getElementById("contextBudget").value || 3600),
       reviewed_only: document.getElementById("reviewedOnlyCheckbox").checked,
     }),
   });

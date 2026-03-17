@@ -64,6 +64,55 @@ class OpenAICompatibleClient:
         except (KeyError, TypeError, json.JSONDecodeError):
             return None
 
+    def generate_context_pack_markdown(
+        self,
+        project: dict[str, Any],
+        template_type: str,
+        task_goal: str,
+        knowledge_units: list[dict[str, Any]],
+    ) -> str | None:
+        if not (self.enabled and self.config.llm_api_url and knowledge_units):
+            return None
+        payload = {
+            "project_name": project.get("name") or "Untitled Project",
+            "template_type": template_type,
+            "task_goal": task_goal,
+            "knowledge_units": [
+                {
+                    "type": unit.get("type"),
+                    "title": unit.get("title"),
+                    "body": unit.get("body"),
+                    "stability": unit.get("stability"),
+                }
+                for unit in knowledge_units[:18]
+            ],
+        }
+        response = self._request(
+            {
+                "model": self.config.llm_text_model,
+                "temperature": 0.2,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Generate a reusable research context pack for the next LLM session. "
+                            "Return Markdown only, no code fences. "
+                            "Do deep synthesis instead of copying the chat wording. "
+                            "Stay grounded in the provided knowledge; if something is missing, say it is not explicitly established. "
+                            "Use this structure: Context Pack -> 0) Project Name -> 1) Research Goals and Problem -> 2) Core Method and Technical Route -> 3) Key Objects, Structured Elements, and Inputs/Outputs -> 4) Metrics, Experiments, and Validation -> 5) Current Conclusions, Open Questions, and Next Steps -> 6) Implementation and Reproduction Notes -> 7) Instructions for the Next LLM -> End of Context Pack."
+                        ),
+                    },
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ],
+            }
+        )
+        if not response:
+            return None
+        try:
+            return str(response["choices"][0]["message"]["content"]).strip()
+        except (KeyError, TypeError):
+            return None
+
     def analyze_image(self, mime_type: str, content: bytes) -> dict[str, Any] | None:
         if not (self.enabled and self.config.llm_vision_model and self.config.llm_api_url):
             return None

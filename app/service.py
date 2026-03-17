@@ -26,6 +26,8 @@ from .extractors import (
     now_iso,
     recommend_projects,
     render_context_pack,
+    limit_context_pack_text,
+    select_context_pack_units,
     sha256_bytes,
     sha256_text,
     summarize_conversation,
@@ -872,11 +874,16 @@ class KnowledgeBaseService:
         template_type = payload.get("template_type") or "merge-conclusions"
         task_goal = payload.get("task_goal") or "Continue the project"
         budget_mode = payload.get("budget_mode") or "chars"
-        budget_value = int(payload.get("budget_value") or 2400)
+        budget_value = int(payload.get("budget_value") or 3600)
         reviewed_only = bool(payload.get("reviewed_only", True))
         project = self._project_with_counts(project_id)
         knowledge_units = self._latest_project_knowledge(project_id, reviewed_only=reviewed_only)
-        output_text, selected_units = render_context_pack(project, template_type, task_goal, budget_mode, budget_value, knowledge_units)
+        selected_units = select_context_pack_units(template_type, budget_mode, budget_value, knowledge_units)
+        output_text = self.model_client.generate_context_pack_markdown(project, template_type, task_goal, selected_units)
+        if output_text:
+            output_text = limit_context_pack_text(output_text, budget_mode, budget_value)
+        else:
+            output_text, selected_units = render_context_pack(project, template_type, task_goal, budget_mode, budget_value, selected_units)
         canonical_id = canonical_context_pack_id(project_id, template_type, task_goal)
         existing = self.database.fetch_one("SELECT MAX(version_no) AS max_version FROM context_pack WHERE canonical_id = ?", (canonical_id,))
         version_no = int(existing["max_version"] or 0) + 1
